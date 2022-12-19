@@ -29,25 +29,22 @@ async function start() {
     ? JSON.parse(fs.readFileSync(resolve('../dist/client/ssr-manifest.json'), 'utf-8'))
     : null
 
-  const ssrServer = isProd
-    ? resolve('../dist/server/main-server.js')
-    : resolve('./main-server.js')
-
   const app = express()
   const router = express.Router()
 
-  const vite = await createServer({
-    // eslint-disable-next-line no-undef
-    root: process.cwd(),
-    server: { middlewareMode: true },
-    appType: 'custom'
-  })
-
+  let vite = null
   if (isProd) {
     app.use(express.static('dist/client', { index: false }))
-  }
+  } else {
+    vite = await createServer({
+      // eslint-disable-next-line no-undef
+      root: process.cwd(),
+      server: { middlewareMode: true },
+      appType: 'custom'
+    })
 
-  app.use(vite.middlewares)
+    app.use(vite.middlewares)
+  }
 
   // Ловим все запросы, а вообще можно продублировать тут
   // логику из src/router.js
@@ -55,9 +52,14 @@ async function start() {
     try {
       const url = req.url
       let template = await getIndexHTML()
-      template = await vite.transformIndexHtml(url, template)
 
-      let render = (await vite.ssrLoadModule(ssrServer)).render
+      let render = null
+      if (isProd) {
+        render = (await import('../dist/server/main-server.js')).render
+      } else {
+        template = await vite.transformIndexHtml(url, template)
+        render = (await vite.ssrLoadModule(resolve('./main-server.js'))).render
+      }
       
       const [appHtml, preloadLinks] = await render(url, manifest)
       const html = template
@@ -66,7 +68,9 @@ async function start() {
 
       res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
     } catch (e) {
-      vite.ssrFixStacktrace(e)
+      if (vite) {
+        vite.ssrFixStacktrace(e)
+      }
       next(e)
     }
   })
